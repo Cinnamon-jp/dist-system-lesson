@@ -1,0 +1,37 @@
+services:
+  node-1:
+    build:
+      context: ../..
+      dockerfile: deployments/podman/Containerfile
+    container_name: dist-node-1
+    command: ["-id", "node-1", "-addr", "node-1:8000", "-peers", "node-2:8000,node-3:8000", "-role", "Primary"]
+    ports:
+      - "8001:8000"
+    networks:
+      - dist-net
+
+  node-2:
+    build:
+      context: ../..
+      dockerfile: deployments/podman/Containerfile
+    container_name: dist-node-2
+    command: ["-id", "node-2", "-addr", "node-2:8000", "-peers", "node-1:8000,node-3:8000", "-role", "Backup"]
+    ports:
+      - "8002:8000"
+    networks:
+      - dist-net
+
+  node-3:
+    build:
+      context: ../..
+      dockerfile: deployments/podman/Containerfile
+    container_name: dist-node-3
+    command: ["-id", "node-3", "-addr", "node-3:8000", "-peers", "node-1:8000,node-2:8000", "-role", "Backup"]
+    ports:
+      - "8003:8000"
+    networks:
+      - dist-net
+
+networks:
+  dist-net:
+    driver: bridge
