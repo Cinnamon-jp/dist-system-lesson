@@ -2,7 +2,9 @@ package store
 
 import (
 	"errors"
+	"maps"
 	"sync"
+	"time"
 
 	"dist_system/internal/model"
 )
@@ -18,7 +20,6 @@ type Store struct {
 }
 
 func NewStore() *Store {
-	// TODO: Storeの初期化処理を実装してください
 	return &Store{
 		items: make(map[string]model.Item),
 	}
@@ -26,32 +27,76 @@ func NewStore() *Store {
 
 // Get は指定したキーのアイテムを取得します
 func (s *Store) Get(key string) (model.Item, bool) {
-	// TODO: スレッドセーフにキーのアイテムを取得する処理を実装してください
-	return model.Item{}, false
+	s.mu.RLock() // 読み取りロック(他の読み取りは同時に行える。書き込みだけダメ)
+	defer s.mu.RUnlock()
+
+	val, ok := s.items[key]
+
+	return val, ok
 }
 
 // Put はキーと値を保存します。
 // version <= 0 の場合、Primaryとして自動的にインクリメントしたバージョンを付与します。
 // version > 0 の場合、Backupとして指定されたバージョンでの更新を試みます（既存より古い場合はErrStaleVersion）。
 func (s *Store) Put(key string, value string, version int64) (model.Item, error) {
-	// TODO: バージョニングとスレッドセーフな書き込み処理を実装してください
-	return model.Item{}, nil
+	s.mu.Lock() // 全部ロック
+	defer s.mu.Unlock()
+
+	existing, exists := s.items[key]
+	var newVersion int64
+
+	if version <= 0 { // Primaryとしての動作
+		if exists {
+			newVersion = existing.Version + 1
+		} else {
+			newVersion = 1
+		}
+	} else { // Backupとしての動作
+		if exists && version < existing.Version { // 既存のバージョンより古い場合はエラー
+			return model.Item{}, ErrStaleVersion
+		}
+		newVersion = version // Primaryのバージョンを使用
+	}
+
+	newItem := model.Item{
+		Key:       key,
+		Value:     value,
+		Version:   newVersion,
+		UpdatedAt: time.Now(),
+	}
+
+	s.items[key] = newItem
+
+	return newItem, nil
 }
 
 // Delete はキーを削除します
 func (s *Store) Delete(key string) bool {
-	// TODO: キーの削除処理を実装してください
-	return false
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, exist := s.items[key]
+
+	if !exist {
+		return false
+	}
+	delete(s.items, key)
+
+	return true
 }
 
 // GetAll は全アイテムのディープコピーを返します
 func (s *Store) GetAll() map[string]model.Item {
-	// TODO: 全アイテムのコピーを返す処理を実装してください
-	return nil
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	return maps.Clone(s.items)
 }
 
 // Len は保持しているキーの総数を返します
 func (s *Store) Len() int {
-	// TODO: 保持しているキーの総数を返す処理を実装してください
-	return 0
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	return len(s.items)
 }
