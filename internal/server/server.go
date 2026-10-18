@@ -3,7 +3,7 @@ package server
 import (
 	"net/http"
 
-	"dist_system/internal/cluster"
+	"github.com/Cinnamon-jp/dist-system/internal/cluster"
 )
 
 type Server struct {

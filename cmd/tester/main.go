@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -14,7 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"dist_system/internal/model"
+	"github.com/Cinnamon-jp/dist-system/internal/model"
 )
 
 const (
@@ -58,7 +59,7 @@ func main() {
 	flag.Parse()
 
 	var nodes []string
-	for _, n := range strings.Split(*nodesFlag, ",") {
+	for n := range strings.SplitSeq(*nodesFlag, ",") {
 		n = strings.TrimSpace(n)
 		if n != "" {
 			nodes = append(nodes, n)
@@ -166,7 +167,7 @@ func (t *Tester) findPrimary() (string, error) {
 			return status.PrimaryAddr, nil
 		}
 	}
-	return "", fmt.Errorf("no primary node found in cluster")
+	return "", errors.New("no primary node found in cluster")
 }
 
 // PutWithSmartRedirect はPrimary宛てにPUTを送信し、必要に応じてリダイレクトを追従します
@@ -174,7 +175,7 @@ func (t *Tester) PutWithSmartRedirect(targetAddr, key, value string) (model.PutR
 	putBody, _ := json.Marshal(model.PutRequest{Value: value})
 
 	currentAddr := targetAddr
-	for attempts := 0; attempts < 3; attempts++ {
+	for range 3 {
 		url := fmt.Sprintf("http://%s/v1/kv/%s", currentAddr, key)
 		req, err := http.NewRequest(http.MethodPut, url, bytes.NewReader(putBody))
 		if err != nil {
@@ -213,7 +214,7 @@ func (t *Tester) PutWithSmartRedirect(targetAddr, key, value string) (model.PutR
 		return model.PutResponse{}, currentAddr, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
-	return model.PutResponse{}, currentAddr, fmt.Errorf("exceeded redirect attempts")
+	return model.PutResponse{}, currentAddr, errors.New("exceeded redirect attempts")
 }
 
 // RunConsistencyTest はデータの書き込みと全ノードでの整合性（バージョン一致）を検証します
@@ -255,7 +256,7 @@ func (t *Tester) RunConsistencyTest(numKeys int) error {
 			nodeOK := false
 			var lastErr string
 
-			for retry := 0; retry < 10; retry++ {
+			for range 10 {
 				url := fmt.Sprintf("http://%s/v1/kv/%s", nodeAddr, key)
 				getResp, err := t.client.Get(url)
 				if err != nil {
@@ -311,7 +312,7 @@ func (t *Tester) RunConsistencyTest(numKeys int) error {
 	elapsed := time.Since(startTime)
 	if failed {
 		fmt.Printf("  %s[FAIL] 整合性テストに失敗しました%s\n", colorRed, colorReset)
-		return fmt.Errorf("consistency test failed")
+		return errors.New("consistency test failed")
 	}
 
 	fmt.Printf("  %s[PASS]%s 全 %d 件の書き込みと全ノード同期の検証に成功しました (所要時間: %v)\n",
@@ -338,11 +339,11 @@ func (t *Tester) RunBenchmark(concurrency, totalReqs int) error {
 	reqsPerWorker := totalReqs / concurrency
 	startTime := time.Now()
 
-	for w := 0; w < concurrency; w++ {
+	for w := range concurrency {
 		wg.Add(1)
 		go func(workerID int) {
 			defer wg.Done()
-			for i := 0; i < reqsPerWorker; i++ {
+			for i := range reqsPerWorker {
 				key := fmt.Sprintf("bench-k-%d", rand.Intn(20)) // 競合が起きるようキー数を絞る
 				val := fmt.Sprintf("v-%d-%d", workerID, i)
 

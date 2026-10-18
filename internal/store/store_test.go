@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -59,7 +60,7 @@ func TestStore_ReplicationVersionControl(t *testing.T) {
 
 	// Replicate stale version 3 (should fail)
 	_, err = s.Put("k1", "v3", 3)
-	if err != ErrStaleVersion {
+	if !errors.Is(err, ErrStaleVersion) {
 		t.Fatalf("expected ErrStaleVersion, got %v", err)
 	}
 
@@ -80,11 +81,11 @@ func TestStore_ConcurrentAccess(t *testing.T) {
 	numGoroutines := 50
 	opsPerGoroutine := 100
 
-	for i := 0; i < numGoroutines; i++ {
+	for i := range numGoroutines {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			for j := 0; j < opsPerGoroutine; j++ {
+			for j := range opsPerGoroutine {
 				key := fmt.Sprintf("key-%d", j%10)
 				val := fmt.Sprintf("val-%d-%d", id, j)
 				_, _ = s.Put(key, val, 0)

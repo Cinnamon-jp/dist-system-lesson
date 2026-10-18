@@ -4,7 +4,7 @@ import (
 	"flag"
 	"strings"
 
-	"dist_system/internal/model"
+	"github.com/Cinnamon-jp/dist-system/internal/model"
 )
 
 func main() {
@@ -21,7 +21,7 @@ func main() {
 
 	var peers []string
 	if *peersFlag != "" {
-		for _, p := range strings.Split(*peersFlag, ",") {
+		for p := range strings.SplitSeq(*peersFlag, ",") {
 			p = strings.TrimSpace(p)
 			if p != "" && p != *addr {
 				peers = append(peers, p)

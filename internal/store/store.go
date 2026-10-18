@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"dist_system/internal/model"
+	"github.com/Cinnamon-jp/dist-system/internal/model"
 )
 
 var (
@@ -38,7 +38,7 @@ func (s *Store) Get(key string) (model.Item, bool) {
 // Put はキーと値を保存します。
 // version <= 0 の場合、Primaryとして自動的にインクリメントしたバージョンを付与します。
 // version > 0 の場合、Backupとして指定されたバージョンでの更新を試みます（既存より古い場合はErrStaleVersion）。
-func (s *Store) Put(key string, value string, version int64) (model.Item, error) {
+func (s *Store) Put(key, value string, version int64) (model.Item, error) {
 	s.mu.Lock() // 全部ロック
 	defer s.mu.Unlock()
 

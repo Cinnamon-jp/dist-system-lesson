@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"dist_system/internal/model"
-	"dist_system/internal/store"
+	"github.com/Cinnamon-jp/dist-system/internal/model"
+	"github.com/Cinnamon-jp/dist-system/internal/store"
 )
 
 var (

@@ -1,0 +1,1 @@
+goでの実装完全完了後、Rust(WebAssembly)での実装に移行する

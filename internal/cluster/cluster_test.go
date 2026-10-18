@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"dist_system/internal/cluster"
-	"dist_system/internal/model"
-	"dist_system/internal/server"
-	"dist_system/internal/store"
+	"github.com/Cinnamon-jp/dist-system/internal/cluster"
+	"github.com/Cinnamon-jp/dist-system/internal/model"
+	"github.com/Cinnamon-jp/dist-system/internal/server"
+	"github.com/Cinnamon-jp/dist-system/internal/store"
 )
 
 // InProcessCluster はテスト用の3ノードクラスタをインメモリで立ち上げるヘルパーです
@@ -32,7 +32,7 @@ func newTestCluster(t *testing.T, count int) *InProcessCluster {
 	}
 
 	// 1. 各ノードのStoreとNodeオブジェクト作成
-	for i := 0; i < count; i++ {
+	for i := range count {
 		c.Stores[i] = store.NewStore()
 		initialRole := model.RoleBackup
 		if i == 0 {
@@ -50,7 +50,7 @@ func newTestCluster(t *testing.T, count int) *InProcessCluster {
 	}
 
 	// 2. httptest.Server を立ち上げてアドレスを解決
-	for i := 0; i < count; i++ {
+	for i := range count {
 		srvHandler := server.NewServer(c.Nodes[i])
 		ts := httptest.NewServer(srvHandler.Handler())
 		c.Servers[i] = ts
@@ -60,9 +60,9 @@ func newTestCluster(t *testing.T, count int) *InProcessCluster {
 	}
 
 	// 3. 各ノードに全Peerのアドレスを設定
-	for i := 0; i < count; i++ {
+	for i := range count {
 		var peers []string
-		for j := 0; j < count; j++ {
+		for j := range count {
 			if i != j {
 				peers = append(peers, c.Nodes[j].Addr())
 			}
@@ -92,8 +92,7 @@ func TestCluster_ReplicationAndQuorum(t *testing.T) {
 	c := newTestCluster(t, 3)
 	defer c.Close()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	c.Start(ctx)
 
 	// Primary は Node 1
@@ -133,8 +132,7 @@ func TestCluster_QuorumToleratesSingleNodeFailure(t *testing.T) {
 	c := newTestCluster(t, 3)
 	defer c.Close()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	c.Start(ctx)
 
 	primary := c.Nodes[0]
@@ -165,8 +163,7 @@ func TestCluster_LeaderElectionOnPrimaryFailure(t *testing.T) {
 	c := newTestCluster(t, 3)
 	defer c.Close()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	c.Start(ctx)
 
 	primary := c.Nodes[0]
