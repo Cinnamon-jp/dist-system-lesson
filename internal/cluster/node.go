@@ -1,8 +1,12 @@
 package cluster
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"math/rand/v2"
 	"net/http"
 	"sync"
 	"time"
@@ -19,8 +23,8 @@ var (
 
 type Config struct {
 	ID                 string
-	Addr               string
-	Peers              []string
+	Addr               string   // IPアドレス+ポート
+	Peers              []string // ペアのIPアドレス+ポート
 	InitialRole        model.Role
 	HeartbeatInterval  time.Duration
 	ElectionTimeoutMin time.Duration
@@ -44,19 +48,238 @@ type Node struct {
 }
 
 func NewNode(cfg Config, s *store.Store) *Node {
-	// TODO: Node構造体の初期化とデフォルト設定を実装してください
+	if cfg.InitialRole == "" {
+		cfg.InitialRole = model.RoleBackup
+	}
+	if cfg.HeartbeatInterval <= 0 {
+		cfg.HeartbeatInterval = 150 * time.Millisecond
+	}
+	if cfg.ElectionTimeoutMin <= 0 {
+		cfg.ElectionTimeoutMin = 400 * time.Millisecond
+	}
+	if cfg.ElectionTimeoutMax <= 0 {
+		cfg.ElectionTimeoutMax = 800 * time.Millisecond
+	}
+
+	primaryAddr := ""
+	if cfg.InitialRole == model.RolePrimary {
+		primaryAddr = cfg.Addr
+	}
+
 	return &Node{
-		cfg:        cfg,
-		store:      s,
-		httpClient: &http.Client{Timeout: 500 * time.Millisecond},
-		role:       cfg.InitialRole,
-		stopCh:     make(chan struct{}),
+		cfg:           cfg,
+		store:         s,
+		httpClient:    &http.Client{Timeout: 500 * time.Millisecond},
+		role:          cfg.InitialRole,
+		term:          1,
+		primaryAddr:   primaryAddr,
+		lastHeartbeat: time.Now(),
+		stopCh:        make(chan struct{}),
 	}
 }
 
 // Start はノードのバックグラウンドタスク（ハートビート送信または選挙タイマー）を開始します
 func (n *Node) Start(ctx context.Context) {
-	// TODO: バックグラウンドゴルーチンで定期処理（ハートビート送信/選挙タイマー監視）を実装してください
+	go n.runLoop(ctx)
+}
+
+func (n *Node) runLoop(ctx context.Context) {
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+
+	electionTimeout := n.randomElectionTimeout()
+	lastHeartbeatSent := time.Time{}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-n.stopCh:
+			return
+		case now := <-ticker.C:
+			n.mu.Lock()
+			role := n.role
+			n.mu.Unlock()
+
+			if role == model.RolePrimary {
+				if now.Sub(lastHeartbeatSent) >= n.cfg.HeartbeatInterval {
+					lastHeartbeatSent = now
+					n.sendHeartbeats()
+				}
+			} else {
+				n.mu.Lock()
+				elapsed := now.Sub(n.lastHeartbeat)
+				n.mu.Unlock()
+
+				if elapsed >= electionTimeout {
+					n.startElection(ctx)
+					electionTimeout = n.randomElectionTimeout()
+				}
+			}
+		}
+	}
+}
+
+func (n *Node) randomElectionTimeout() time.Duration {
+	min := n.cfg.ElectionTimeoutMin
+	max := n.cfg.ElectionTimeoutMax
+
+	diff := max - min
+	if diff <= 0 {
+		return min
+	}
+
+	randomExtra := rand.N(diff)
+	return min + randomExtra
+}
+
+func (n *Node) sendHeartbeats() {
+	n.mu.RLock()
+	if n.role != model.RolePrimary {
+		n.mu.RUnlock()
+		return
+	}
+	term := n.term
+	id := n.cfg.ID
+	addr := n.cfg.Addr
+	peers := make([]string, len(n.cfg.Peers))
+	copy(peers, n.cfg.Peers)
+	n.mu.RUnlock()
+
+	reqBody := model.HeartbeatRequest{
+		Term:        term,
+		PrimaryID:   id,
+		PrimaryAddr: addr,
+	}
+
+	data, err := json.Marshal(reqBody)
+	if err != nil {
+		return
+	}
+
+	for _, peer := range peers {
+		go func(peerAddr string) {
+			url := fmt.Sprintf("http://%s/internal/heartbeat", peerAddr)
+			resp, err := n.httpClient.Post(url, "application/json", bytes.NewReader(data))
+			if err != nil {
+				return
+			}
+			defer resp.Body.Close()
+
+			var hbResp model.HeartbeatResponse
+			if err := json.NewDecoder(resp.Body).Decode(&hbResp); err != nil {
+				return
+			}
+
+			if hbResp.Term > term {
+				n.mu.Lock()
+				if hbResp.Term > n.term {
+					n.term = hbResp.Term
+					n.role = model.RoleBackup
+					n.primaryAddr = ""
+					n.votedFor = ""
+				}
+				n.mu.Unlock()
+			}
+		}(peer)
+	}
+}
+
+func (n *Node) startElection(ctx context.Context) {
+	n.mu.Lock()
+	if n.role == model.RolePrimary {
+		n.mu.Unlock()
+		return
+	}
+
+	n.role = model.RoleCandidate
+	n.term++
+	n.votedFor = n.cfg.ID
+	n.lastHeartbeat = time.Now()
+	currentTerm := n.term
+	candidateID := n.cfg.ID
+	candidateAddr := n.cfg.Addr
+	peers := make([]string, len(n.cfg.Peers))
+	copy(peers, n.cfg.Peers)
+	n.mu.Unlock()
+
+	totalNodes := len(peers) + 1
+	quorum := (totalNodes / 2) + 1
+
+	if totalNodes == 1 {
+		n.promoteToPrimary(currentTerm)
+		return
+	}
+
+	reqBody := model.VoteRequest{
+		Term:          currentTerm,
+		CandidateID:   candidateID,
+		CandidateAddr: candidateAddr,
+	}
+	data, _ := json.Marshal(reqBody)
+
+	votesChan := make(chan bool, len(peers))
+
+	for _, peer := range peers {
+		go func(peerAddr string) {
+			url := fmt.Sprintf("http://%s/internal/request-vote", peerAddr)
+			resp, err := n.httpClient.Post(url, "application/json", bytes.NewReader(data))
+			if err != nil {
+				votesChan <- false
+				return
+			}
+			defer resp.Body.Close()
+
+			var vResp model.VoteResponse
+			if err := json.NewDecoder(resp.Body).Decode(&vResp); err != nil {
+				votesChan <- false
+				return
+			}
+
+			if vResp.Term > currentTerm {
+				n.mu.Lock()
+				if vResp.Term > n.term {
+					n.term = vResp.Term
+					n.role = model.RoleBackup
+					n.votedFor = ""
+				}
+				n.mu.Unlock()
+			}
+
+			votesChan <- vResp.VoteGranted
+		}(peer)
+	}
+
+	grantedVotes := 1
+	for i := 0; i < len(peers); i++ {
+		select {
+		case <-ctx.Done():
+			return
+		case <-n.stopCh:
+			return
+		case granted := <-votesChan:
+			if granted {
+				grantedVotes++
+			}
+			if grantedVotes >= quorum {
+				n.promoteToPrimary(currentTerm)
+				return
+			}
+		}
+	}
+}
+
+func (n *Node) promoteToPrimary(term int64) {
+	n.mu.Lock()
+	if n.role != model.RoleCandidate || n.term != term {
+		n.mu.Unlock()
+		return
+	}
+	n.role = model.RolePrimary
+	n.primaryAddr = n.cfg.Addr
+	n.mu.Unlock()
+
+	n.sendHeartbeats()
 }
 
 // Stop はノードのバックグラウンド処理を停止します
